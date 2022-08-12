@@ -17,7 +17,7 @@ package processor
 import (
 	"fmt"
 
-	"github.com/sealerio/sealer/utils/net"
+	"github.com/sealerio/sealer/pkg/registry"
 
 	"github.com/sealerio/sealer/pkg/clusterfile"
 	"github.com/sealerio/sealer/pkg/config"
@@ -27,8 +27,10 @@ import (
 	"github.com/sealerio/sealer/pkg/image"
 	"github.com/sealerio/sealer/pkg/plugin"
 	"github.com/sealerio/sealer/pkg/runtime"
+	"github.com/sealerio/sealer/pkg/runtime/kubernetes"
 	v1 "github.com/sealerio/sealer/types/api/v1"
 	v2 "github.com/sealerio/sealer/types/api/v2"
+	"github.com/sealerio/sealer/utils/net"
 	"github.com/sealerio/sealer/utils/platform"
 	"github.com/sealerio/sealer/utils/ssh"
 )
@@ -91,7 +93,7 @@ func (c *CreateProcessor) MountImage(cluster *v2.Cluster) error {
 	if err = c.cloudImageMounter.MountImage(cluster); err != nil {
 		return err
 	}
-	runTime, err := runtime.NewDefaultRuntime(cluster, c.ClusterFile.GetKubeadmConfig())
+	runTime, err := kubernetes.NewDefaultRuntime(cluster, c.ClusterFile.GetKubeadmConfig())
 	if err != nil {
 		return fmt.Errorf("failed to init runtime: %v", err)
 	}
@@ -104,8 +106,8 @@ func (c *CreateProcessor) RunConfig(cluster *v2.Cluster) error {
 }
 
 func (c *CreateProcessor) MountRootfs(cluster *v2.Cluster) error {
-	hosts := append(cluster.GetMasterIPList(), cluster.GetNodeIPList()...)
-	regConfig := runtime.GetRegistryConfig(platform.DefaultMountClusterImageDir(cluster.Name), cluster.GetMaster0IP())
+	hosts := cluster.GetAllIPList()
+	regConfig := registry.GetConfig(platform.DefaultMountClusterImageDir(cluster.Name), cluster.GetMaster0IP())
 	if net.NotInIPList(regConfig.IP, hosts) {
 		hosts = append(hosts, regConfig.IP)
 	}
@@ -119,16 +121,14 @@ func (c *CreateProcessor) MountRootfs(cluster *v2.Cluster) error {
 }
 
 func (c *CreateProcessor) Init(cluster *v2.Cluster) error {
-	return c.Runtime.Init(cluster)
+	return c.Runtime.Init()
 }
 
 func (c *CreateProcessor) Join(cluster *v2.Cluster) error {
-	err := c.Runtime.JoinMasters(cluster.GetMasterIPList()[1:])
-	if err != nil {
+	if err := c.Runtime.JoinMasters(cluster.GetMasterIPList()[1:]); err != nil {
 		return err
 	}
-	err = c.Runtime.JoinNodes(cluster.GetNodeIPList())
-	if err != nil {
+	if err := c.Runtime.JoinNodes(cluster.GetNodeIPList()); err != nil {
 		return err
 	}
 	return clusterfile.SaveToDisk(cluster, cluster.Name)
